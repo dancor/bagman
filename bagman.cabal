@@ -3,9 +3,9 @@ version:        0.1
 license:        GPL
 license-file:   LICENSE
 author:         dan corson <danl@alum.mit.edu>
-synopsis:       <syn>
+synopsis:       for my backgammon analyses
 build-type:     Simple
-build-depends:  base, haskell98
+build-depends:  FUtil, array, base, haskell98, multiset, containers
 
 executable:     bagman
 main-is:        Main.hs
