@@ -7,18 +7,19 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import FUtil
+import Mvs
+import System.IO
 import qualified Data.Map as M
 import qualified Data.MultiSet as MS
 
 data Color = Blk | Red deriving Eq
-data BdPoint = Emp | Pts Color Int
+data BdPoint = Emp | Pts Color Int deriving Eq
 
 instance Show Color where
   show Blk = "O"
   show Red = "#"
 
 type Bd = Array Int BdPoint
-type Mv = MS.MultiSet [Int]
 
 bdStart :: Bd
 bdStart = listArray (1, 24) (repeat Emp) // [
@@ -59,34 +60,113 @@ readMv s = MS.fromOccurList parts where
     Nothing -> (s, 1)
     Just (sing, numParen) -> (sing, read $ init numParen)
 
+-- fixme: doesn't do hits
 -- todo: where will we error check correct-side-moving-correct-dir
 -- todo: this doesn't check intermediate hops etc either
--- use Either String instead of Maybe?
-doMv :: Color -> Mv -> Bd -> Maybe Bd
+doMv :: Color -> Mv -> Bd -> Either String Bd
 doMv col mv bd =
   foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) bd $ MS.toList mv
   where
   decr i bd = case bd ! i of
-    Pts c n -> if c == col then Just $ bd // [(i, Pts c $ n - 1)] else Nothing
-    _ -> Nothing
+    Pts c n -> if c == col then return $ bd // [(i, Pts c $ n - 1)]
+      else fail $ "Trying to move " ++ show col ++ " piece from point " ++
+        show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
+        " pieces."
+    _ -> fail $ "Trying to move " ++ show col ++ " piece from point " ++
+        show i ++ ", but that point has no pieces."
   incr i bd = case bd ! i of
-    Pts c n -> if c == col then Just $ bd // [(i, Pts c $ n + 1)] else Nothing
-    Emp -> Just $ bd // [(i, Pts col 1)]
+    Pts c n -> if c == col then return $ bd // [(i, Pts c $ n + 1)]
+      else fail $ "Trying to move " ++ show col ++ " piece to point " ++
+        show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
+        " pieces."
+    Emp -> return $ bd // [(i, Pts col 1)]
 
-readMvs :: String -> IO [((Int, Int), Mv)]
-readMvs fileName = do
-  c <- readFileStrict fileName
-  let
-    ls =
-      filter (\ l -> not (null $ filter (not . isSpace) l) && head l /= '#') $
-      lines c
-  -- just takes first move currently
-  return $ map (first (bothond read . fromJust . breakMb (== ' ')) .
-    second (readMv . takeWhile (/= ',') . drop 1) . span (/= '|')) ls
+revMv :: Mv -> Mv
+revMv = MS.fromOccurList . map (first (map (25 -))) . MS.toOccurList
+
+processMv :: ((Mv, Roll), Mv) -> IO ()
+processMv ((mv, roll), reply) = do
+  let Right bd = doMv Blk mv bdStart
+  putStrLn $ showBd bd
+  print roll
+  --print $ guessBestRepl bd roll
+  mapM_ print $ guessBestRepl bd roll
+  --print $ revMv reply
+
+{-
+-- suggestion: biggest num first incoming and outgoing
+rollMvNums :: Roll -> [Int]
+rollMvNums (x, y) = if x == y then [x, x, x, x] else [x, y]
+  pipCounts = if x == y then [(x, 4)] else [(x, 1), (y, 1)]
+-}
+
+allDieMvs :: Bd -> Color -> Int -> [(Int, Int)]
+allDieMvs bd color r = catMaybes $ map tryStart [1..24] where
+  tryStart i = case bd ! i of
+    Pts c n -> if c == color && i' >= 1 && i' <= 24
+      then case bd ! i' of
+        Pts c n -> if c == color || n == 1
+          then Just (i, i')
+          else Nothing
+        Emp -> Just (i, i')
+      else Nothing where
+      i' = if color == Blk then i - r else i + r
+    Emp -> Nothing
+
+-- Takes a state and inputs, and a way of generating different ways to use an
+--    input on a state (with an input-use signature), and a way to convert an
+--    input-use signature into a state-modifier.
+-- Returns all the possible ways of applying all the inputs in order to the
+--    initial state.  So the result is a list of lists that are each the same
+--    size as the inp list.
+genInpUses :: (inpUse -> st -> st) -> (st -> inp -> [inpUse]) -> st -> [inp] ->
+  [[inpUse]]
+genInpUses _ _ _ [] = [[]]
+genInpUses doUseOnSt stInpToUses initSt (inp:inps) = concat
+  [map (use:) $ genInpUses doUseOnSt stInpToUses (doUseOnSt use initSt) inps |
+   use <- stInpToUses initSt inp]
+
+{-
+genPoss
+
+  [ assocs bd
+
+  targets = map fst . filter ((== Pts Blk 1) . snd) . take 12 $
+-}
+
+-- todo: doesn't do coming in, bearing off, or if not both poss
+-- could be more efficient and not gen dupes,
+--    but we don't care and just nub after..
+--allMvPoss :: Bd -> Color -> Roll -> [Mv]
+allMvPoss bd color (r1, r2) = nub . map pairListToMv $
+  genInpUses ((fromRight .) . doMv color . pairListToMv . (:[]))
+    (\ bd r -> allDieMvs bd color r) bd pipCounts
+  where
+  pairListToMv :: [(Int, Int)] -> Mv
+  -- todo: make this cooler to combine re-moves
+  pairListToMv = MS.fromList . map pairToList where
+    pairToList (x, y) = [x, y]
+  pipCounts :: [Int]
+  pipCounts = if r1 == r2 then [r1, r1, r1, r1] else [r1, r2]
+
+--guessBestRepl :: Bd -> Roll -> Either String Mv
+--guessBestRepl :: Bd -> Roll -> [Mv]
+guessBestRepl bd roll = allMvPoss bd Red roll
+{-
+tryHitOppSide where
+
+  tryHitOppSide = targets
+  targets = map fst . filter ((== Pts Blk 1) . snd) . take 12 $ assocs bd
+
+  mvNums = rollMvNums roll
+-}
+
+-- testing move equality is complicated by collapsing shorthand
+-- (e.g. 24/20 on double-ones), but still should be doable
 
 main :: IO ()
 main = do
-  mvs <- readMvs "open.mem"
-  --mapM_ print mvs
-  mapM_ (putStrLn . showBd . fromJust . (\ mv -> doMv Blk mv bdStart) . snd)
-    mvs
+  mvs <- readRollMvs "data/open-reply.mem"
+  case mvs of
+    Left err -> hPutStrLn stderr $ show err
+    Right mvs -> mapM_ processMv $ take 1 mvs

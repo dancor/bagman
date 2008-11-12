@@ -5,7 +5,7 @@ license-file:   LICENSE
 author:         dan corson <danl@alum.mit.edu>
 synopsis:       for my backgammon analyses
 build-type:     Simple
-build-depends:  FUtil, array, base, haskell98, multiset, containers
+build-depends:  FUtil, array, base, containers, haskell98, multiset, parsec
 
 executable:     bagman
 main-is:        Main.hs
