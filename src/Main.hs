@@ -12,23 +12,25 @@ import System.IO
 import qualified Data.Map as M
 import qualified Data.MultiSet as MS
 
-data Color = Blk | Red deriving Eq
+data Color = Blk | Red deriving (Eq, Ix, Ord)
 data BdPoint = Emp | Pts Color Int deriving Eq
 
 instance Show Color where
   show Blk = "O"
   show Red = "#"
 
-type Bd = Array Int BdPoint
+type Bd = (Array Int BdPoint, Array Color Int)
 
 bdStart :: Bd
-bdStart = listArray (1, 24) (repeat Emp) // [
+bdStart = (listArray (1, 24) (repeat Emp) // [
   (24, Pts Blk 2), (13, Pts Blk 5), ( 8, Pts Blk 3), ( 6, Pts Blk 5),
   ( 1, Pts Red 2), (12, Pts Red 5), (17, Pts Red 3), (19, Pts Red 5)
-  ]
+  ], listArray (Blk, Red) $ repeat 0)
 
 showBd :: Bd -> String
-showBd bd = intercalate "\n" . map (\ (a, b) -> a ++ " |" ++ b) $
+-- todo: show bar
+showBd (bd, bar) = intercalate "\n" . zipWith ($)
+  (repeat $ (\ (a, b) -> a ++ " |" ++ b)) $
   [bothond (intercalate " " . map (padl ' ' 2 . show . fst)) tops] ++
   [(bothond ((" " ++) . intercalate "  " . map (pip i . snd)) tops) |
     i <- [0..4]] ++
@@ -63,24 +65,25 @@ readMv s = MS.fromOccurList parts where
 -- todo: where will we error check correct-side-moving-correct-dir
 -- todo: this doesn't check intermediate hops
 doMv :: Color -> Mv -> Bd -> Either String Bd
-doMv col mv bd =
-  foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) bd $ MS.toList mv
+doMv col mv bdBar =
+  foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) bdBar $ MS.toList mv
   where
-  decr i bd = case bd ! i of
-    Pts c n -> if c == col then return $ bd // [(i, Pts c $ n - 1)]
+  decr i (bd, bar) = case bd ! i of
+    Pts c n -> if c == col
+      then return (bd // [(i, if n == 1 then Emp else Pts c $ n - 1)], bar)
       else fail $ "Trying to move " ++ show col ++ " piece from point " ++
         show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
         " pieces."
     Emp -> fail $ "Trying to move " ++ show col ++ " piece from point " ++
         show i ++ ", but that point has no pieces."
-  incr i bd = case bd ! i of
-    Pts c n -> if c == col then return $ bd // [(i, Pts c $ n + 1)]
+  incr i (bd, bar) = case bd ! i of
+    Pts c n -> if c == col then return (bd // [(i, Pts c $ n + 1)], bar)
       else if n == 1
-        then return $ bd // [(i, Pts col 1)]
+        then return (bd // [(i, Pts col 1)], bar // [(c, bar ! c + 1)])
         else fail $ "Trying to move " ++ show col ++ " piece to point " ++
           show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
           " pieces."
-    Emp -> return $ bd // [(i, Pts col 1)]
+    Emp -> return (bd // [(i, Pts col 1)], bar)
 
 revMv :: Mv -> Mv
 revMv = MS.fromOccurList . map (first (map (25 -))) . MS.toOccurList
@@ -91,8 +94,10 @@ processMv ((mv, roll), reply) = do
   putStrLn $ showBd bd
   print roll
   --print $ guessBestRepl bd roll
-  mapM_ print $ guessBestRepl bd roll
-  --print $ revMv reply
+  --putStrLn $ either id showBd $ doMv Red (MS.fromOccurList [([1, 2], 2)]) bd
+  flip mapM_ (guessBestRepl bd roll) $ \ mv -> do
+    print mv
+    putStrLn $ either id showBd $ doMv Red mv bd
 
 {-
 -- suggestion: biggest num first incoming and outgoing
@@ -101,8 +106,9 @@ rollMvNums (x, y) = if x == y then [x, x, x, x] else [x, y]
   pipCounts = if x == y then [(x, 4)] else [(x, 1), (y, 1)]
 -}
 
+-- coming in is not implemented
 allDieMvs :: Bd -> Color -> Int -> [(Int, Int)]
-allDieMvs bd color r = catMaybes $ map tryStart [1..24] where
+allDieMvs (bd, _) color r = catMaybes $ map tryStart [1..24] where
   tryStart i = case bd ! i of
     Pts c n -> if c == color && i' >= 1 && i' <= 24
       then case bd ! i' of
@@ -139,9 +145,9 @@ genPoss
 -- could be more efficient and not gen dupes,
 --    but we don't care and just nub after..
 --allMvPoss :: Bd -> Color -> Roll -> [Mv]
-allMvPoss bd color (r1, r2) = nub . map pairListToMv $
+allMvPoss bdBar color (r1, r2) = nub . map pairListToMv $
   genInpUses ((fromRight .) . doMv color . pairListToMv . (:[]))
-    (\ bd r -> allDieMvs bd color r) bd pipCounts
+    (\ bdBar' r -> allDieMvs bdBar' color r) bdBar pipCounts
   where
   pairListToMv :: [(Int, Int)] -> Mv
   -- todo: make this cooler to combine re-moves
