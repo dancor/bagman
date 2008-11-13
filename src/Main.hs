@@ -60,9 +60,8 @@ readMv s = MS.fromOccurList parts where
     Nothing -> (s, 1)
     Just (sing, numParen) -> (sing, read $ init numParen)
 
--- fixme: doesn't do hits
 -- todo: where will we error check correct-side-moving-correct-dir
--- todo: this doesn't check intermediate hops etc either
+-- todo: this doesn't check intermediate hops
 doMv :: Color -> Mv -> Bd -> Either String Bd
 doMv col mv bd =
   foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) bd $ MS.toList mv
@@ -72,13 +71,15 @@ doMv col mv bd =
       else fail $ "Trying to move " ++ show col ++ " piece from point " ++
         show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
         " pieces."
-    _ -> fail $ "Trying to move " ++ show col ++ " piece from point " ++
+    Emp -> fail $ "Trying to move " ++ show col ++ " piece from point " ++
         show i ++ ", but that point has no pieces."
   incr i bd = case bd ! i of
     Pts c n -> if c == col then return $ bd // [(i, Pts c $ n + 1)]
-      else fail $ "Trying to move " ++ show col ++ " piece to point " ++
-        show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
-        " pieces."
+      else if n == 1
+        then return $ bd // [(i, Pts col 1)]
+        else fail $ "Trying to move " ++ show col ++ " piece to point " ++
+          show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
+          " pieces."
     Emp -> return $ bd // [(i, Pts col 1)]
 
 revMv :: Mv -> Mv

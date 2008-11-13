@@ -2,3 +2,5 @@ The goal for v1 is to determine in which cases optimal backgammon
 opening-replies don't match the naively-expected optimal moves (based on some
 sweeping heuristics), to facilitate memorizing and learning from the optimal
 opening-replies.
+
+- filter move possibilities for if they meet criteria
