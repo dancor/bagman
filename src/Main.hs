@@ -11,6 +11,7 @@ import Mvs
 import System.IO
 import qualified Data.Map as M
 import qualified Data.MultiSet as MS
+import qualified Data.Set as S
 
 data Color = Blk | Red deriving (Eq, Ix, Ord)
 data BdPoint = Emp | Pts Color Int deriving Eq
@@ -28,17 +29,18 @@ bdStart = (listArray (1, 24) (repeat Emp) // [
   ], listArray (Blk, Red) $ repeat 0)
 
 showBd :: Bd -> String
--- todo: show bar
-showBd (bd, bar) = intercalate "\n" . zipWith ($)
-  (repeat $ (\ (a, b) -> a ++ " |" ++ b)) $
-  [bothond (intercalate " " . map (padl ' ' 2 . show . fst)) tops] ++
-  [(bothond ((" " ++) . intercalate "  " . map (pip i . snd)) tops) |
-    i <- [0..4]] ++
-  [join (,) $ replicate (6 * 3 - 1) ' '] ++
-  [(bothond ((" " ++) . intercalate "  " . map (pip i . snd)) btms) |
-    i <- reverse [0..4]] ++
-  [bothond (intercalate " " . map (padl ' ' 2 . show . fst)) btms]
+-- show bar better?
+showBd (bd, bar) = mainBd ++ "\n" ++ show (assocs bar)
   where
+  mainBd = intercalate "\n" . zipWith ($)
+    (repeat $ (\ (a, b) -> a ++ " |" ++ b)) $
+    [bothond (intercalate " " . map (padl ' ' 2 . show . fst)) tops] ++
+    [(bothond ((" " ++) . intercalate "  " . map (pip i . snd)) tops) |
+      i <- [0..4]] ++
+    [join (,) $ replicate (6 * 3 - 1) ' '] ++
+    [(bothond ((" " ++) . intercalate "  " . map (pip i . snd)) btms) |
+      i <- reverse [0..4]] ++
+    [bothond (intercalate " " . map (padl ' ' 2 . show . fst)) btms]
   pip 0 Emp = "."
   pip _ Emp = " "
   pip 0 (Pts c j) = if j > 5 then show j else show c
@@ -62,49 +64,46 @@ readMv s = MS.fromOccurList parts where
     Nothing -> (s, 1)
     Just (sing, numParen) -> (sing, read $ init numParen)
 
+-- right now, just hits performed in the move
+type MvExtraInfo = S.Set Int
+
 -- todo: where will we error check correct-side-moving-correct-dir
 -- todo: this doesn't check intermediate hops
-doMv :: Color -> Mv -> Bd -> Either String Bd
+doMv :: Color -> Mv -> Bd -> Either String (Bd, MvExtraInfo)
 doMv col mv bdBar =
-  foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) bdBar $ MS.toList mv
+  foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) (bdBar, S.empty) $
+    MS.toList mv
   where
-  decr i (bd, bar) = case bd ! i of
+  decr i ((bd, bar), extraInfo) = case bd ! i of
     Pts c n -> if c == col
-      then return (bd // [(i, if n == 1 then Emp else Pts c $ n - 1)], bar)
+      then return ((bd // [(i, if n == 1 then Emp else Pts c $ n - 1)], bar),
+        extraInfo)
       else fail $ "Trying to move " ++ show col ++ " piece from point " ++
         show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
         " pieces."
     Emp -> fail $ "Trying to move " ++ show col ++ " piece from point " ++
         show i ++ ", but that point has no pieces."
-  incr i (bd, bar) = case bd ! i of
-    Pts c n -> if c == col then return (bd // [(i, Pts c $ n + 1)], bar)
+  incr i ((bd, bar), extraInfo) = case bd ! i of
+    Pts c n -> if c == col
+      then return ((bd // [(i, Pts c $ n + 1)], bar), extraInfo)
       else if n == 1
-        then return (bd // [(i, Pts col 1)], bar // [(c, bar ! c + 1)])
+        then return ((bd // [(i, Pts col 1)], bar // [(c, bar ! c + 1)]),
+          S.insert i extraInfo)
         else fail $ "Trying to move " ++ show col ++ " piece to point " ++
           show i ++ ", but that point has " ++ show n ++ " " ++ show c ++
           " pieces."
-    Emp -> return (bd // [(i, Pts col 1)], bar)
+    Emp -> return ((bd // [(i, Pts col 1)], bar), extraInfo)
 
 revMv :: Mv -> Mv
 revMv = MS.fromOccurList . map (first (map (25 -))) . MS.toOccurList
 
 processMv :: ((Mv, Roll), Mv) -> IO ()
 processMv ((mv, roll), reply) = do
-  let Right bd = doMv Blk mv bdStart
+  let Right (bd, _) = doMv Blk mv bdStart
   putStrLn $ showBd bd
   print roll
+  guessBestRepl bd roll
   --print $ guessBestRepl bd roll
-  --putStrLn $ either id showBd $ doMv Red (MS.fromOccurList [([1, 2], 2)]) bd
-  flip mapM_ (guessBestRepl bd roll) $ \ mv -> do
-    print mv
-    putStrLn $ either id showBd $ doMv Red mv bd
-
-{-
--- suggestion: biggest num first incoming and outgoing
-rollMvNums :: Roll -> [Int]
-rollMvNums (x, y) = if x == y then [x, x, x, x] else [x, y]
-  pipCounts = if x == y then [(x, 4)] else [(x, 1), (y, 1)]
--}
 
 -- coming in is not implemented
 allDieMvs :: Bd -> Color -> Int -> [(Int, Int)]
@@ -133,20 +132,12 @@ genInpUses doUseOnSt stInpToUses initSt (inp:inps) = concat
   [map (use:) $ genInpUses doUseOnSt stInpToUses (doUseOnSt use initSt) inps |
    use <- stInpToUses initSt inp]
 
-{-
-genPoss
-
-  [ assocs bd
-
-  targets = map fst . filter ((== Pts Blk 1) . snd) . take 12 $
--}
-
 -- todo: doesn't do coming in, bearing off, or if not both poss
 -- could be more efficient and not gen dupes,
 --    but we don't care and just nub after..
 --allMvPoss :: Bd -> Color -> Roll -> [Mv]
 allMvPoss bdBar color (r1, r2) = nub . map pairListToMv $
-  genInpUses ((fromRight .) . doMv color . pairListToMv . (:[]))
+  genInpUses ((\ x -> fst . fromRight . x) . doMv color . pairListToMv . (:[]))
     (\ bdBar' r -> allDieMvs bdBar' color r) bdBar pipCounts
   where
   pairListToMv :: [(Int, Int)] -> Mv
@@ -158,15 +149,16 @@ allMvPoss bdBar color (r1, r2) = nub . map pairListToMv $
 
 --guessBestRepl :: Bd -> Roll -> Either String Mv
 --guessBestRepl :: Bd -> Roll -> [Mv]
-guessBestRepl bd roll = allMvPoss bd Red roll
-{-
-tryHitOppSide where
-
-  tryHitOppSide = targets
-  targets = map fst . filter ((== Pts Blk 1) . snd) . take 12 $ assocs bd
-
-  mvNums = rollMvNums roll
--}
+guessBestRepl bd roll =
+  flip mapM_ mvsHitOppSide $ \ mv -> do
+    print mv
+    printDoMv $ doMv Red mv bd
+  where
+  printDoMv = putStrLn . either id (showBd . fst)
+  mvs = allMvPoss bd Red roll
+  --mvsHit = filter (\ mv -> not . S.null . snd . fromRight $ doMv Red mv bd) mvs
+  mvsHitOppSide = filter (\ mv ->
+    not . S.null . S.filter (<= 12) . snd . fromRight $ doMv Red mv bd) mvs
 
 -- testing move equality is complicated by collapsing shorthand
 -- (e.g. 24/20 on double-ones), but still should be doable
