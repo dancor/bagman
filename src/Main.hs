@@ -50,21 +50,6 @@ showBd (bd, bar) = mainBd ++ "\n" ++ show (assocs bar)
   tops = splitAt 6 top
   btms = splitAt 6 btm
 
--- readMv "24/23 13/11" == MS.fromList [[24, 23], [13, 11]]
--- readMv "24/20(2) 13/11" == MS.fromOccurList [([24, 20], 2), ([13, 11], 1)]
--- readMv "6/2/1" == MS.fromList [[6, 2, 1]]
--- readMv "6/2/1(2)" == MS.fromOccurList [([6, 2, 1], 2)]
--- *'s (for hits) just ignored currently
--- todo: error check for moves not at least size 2?
--- todo: where check move against roll (also only-can-move-one rule etc)
-readMv :: String -> Mv
-readMv s = MS.fromOccurList parts where
-  parts = map (first (map read . breaks (== '/')) . getRep) . breaks (== ' ') $
-    filter (/= '*') s
-  getRep s = case breakMb (== '(') s of
-    Nothing -> (s, 1)
-    Just (sing, numParen) -> (sing, read $ init numParen)
-
 -- right now, just hits performed in the move
 type MvExtraInfo = S.Set Int
 
@@ -72,8 +57,8 @@ type MvExtraInfo = S.Set Int
 -- todo: this doesn't check intermediate hops
 doMv :: Color -> Mv -> Bd -> Either String (Bd, MvExtraInfo)
 doMv col mv bdBar =
-  foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) (bdBar, S.empty) $
-    MS.toList mv
+  foldM (\ b pts -> decr (head pts) =<< incr (last pts) b) (bdBar, S.empty) .
+    MS.toList $ mvPts mv
   where
   decr i ((bd, bar), extraInfo) = case bd ! i of
     Pts c n -> if c == col
@@ -96,8 +81,11 @@ doMv col mv bdBar =
     Emp -> return ((bd // [(i, Pts col 1)], bar), extraInfo)
 
 revMv :: Mv -> Mv
-revMv = MS.fromOccurList . map (first (map (25 -))) . MS.toOccurList
+revMv = MS.fromOccurList .
+  map (first (\ (i0, iRest) -> (25 - i0, map (first (25 -)) iRest))) .
+  MS.toOccurList
 
+{-
 processMv :: ((Mv, Roll), Mv) -> IO ()
 processMv ((mv, roll), reply) = do
   let Right (bd, _) = doMv Blk mv bdStart
@@ -105,6 +93,7 @@ processMv ((mv, roll), reply) = do
   print roll
   guessBestRepl bd roll
   --print $ guessBestRepl bd roll
+  -}
 
 -- coming in is not implemented
 -- bearing off is not implemented
@@ -144,8 +133,8 @@ allMvPoss bdBar color (r1, r2) = nub . map pairListToMv $
   where
   pairListToMv :: [(Int, Int)] -> Mv
   -- todo: make this cooler to combine re-moves
-  pairListToMv = MS.fromList . map pairToList where
-    pairToList (x, y) = [x, y]
+  -- note: we aren't doing hit annotations..
+  pairListToMv = MS.fromList . map (\ (x, y) -> (x, [(y, False)])) where
   pipCounts :: [Int]
   pipCounts = if r1 == r2 then [r1, r1, r1, r1] else [r1, r2]
 
