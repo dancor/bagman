@@ -4,6 +4,7 @@ import Control.Arrow
 import Control.Monad
 import Data.Array
 import Data.Char
+import Data.Function
 import Data.List
 import Data.Maybe
 import FUtil
@@ -106,6 +107,7 @@ processMv ((mv, roll), reply) = do
   --print $ guessBestRepl bd roll
 
 -- coming in is not implemented
+-- bearing off is not implemented
 allDieMvs :: Bd -> Color -> Int -> [(Int, Int)]
 allDieMvs (bd, _) color r = catMaybes $ map tryStart [1..24] where
   tryStart i = case bd ! i of
@@ -163,9 +165,31 @@ guessBestRepl bd roll =
 -- testing move equality is complicated by collapsing shorthand
 -- (e.g. 24/20 on double-ones), but still should be doable
 
+showRoll :: Roll -> String
+showRoll (r1, r2) = show r1 ++ " " ++ show r2
+
+showRollMv rm = showMv (rmMv rm) ++ "  " ++ showRoll (rmRoll rm) ++ "|" ++
+  showCubeMvs (rmCubeMvs rm)
+
 main :: IO ()
 main = do
-  mvs <- readRollMvs "data/open-reply.mem"
-  case mvs of
-    Left err -> hPutStrLn stderr $ show err
-    Right mvs -> mapM_ processMv $ take 1 mvs
+  res <- readRollMvs "data/open-reply.mem"
+  case res of
+    Left e -> print e
+    Right mvs -> putStr . unlines . concat .
+      map (\ (roll, cubeMvs) -> [showRoll roll] ++ cubeMvs) .
+      M.toList .
+      M.map (
+        map (\ (x, y) ->
+          showCubeMvs x
+          ++ " <- " ++
+          show y
+          --show (length $ S.toList y)
+          --(intercalate ", " . S.toList $ S.map showMv y)
+        ) .
+        reverse . sortBy (compare `on` snd) .
+        map (second (length . S.toList)) .
+        M.toList . flipMap . M.fromList
+      ) .
+      M.fromListWith (++) $
+      map (\ rm -> (rmRoll rm, [(rmMv rm, rmCubeMvs rm)])) mvs
